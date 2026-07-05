@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WordUp — Learn English Vocabulary</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="theme-picker" title="Change theme">
+    <button class="theme-dot" data-theme="plum" style="background:#2a1936" title="Plum"></button>
+    <button class="theme-dot" data-theme="ocean" style="background:#16233b" title="Ocean"></button>
+    <button class="theme-dot" data-theme="forest" style="background:#16281c" title="Forest"></button>
+    <button class="theme-dot" data-theme="mono" style="background:#1b1b1f" title="Grey / Black"></button>
+    <button class="theme-dot" data-theme="light" style="background:#f5f1ea" title="Light"></button>
+  </div>
+  <h1>WordUp</h1>
+  <p class="subtitle">Learn English words by level &amp; topic</p>
+</header>
+
+<nav class="tab-bar">
+  <button class="tab active" id="tab-groups">Groups</button>
+  <button class="tab" id="tab-grammar">Grammar</button>
+  <button class="tab" id="tab-learning">Still learning <span id="learning-badge" class="badge hidden"></span></button>
+  <button class="tab" id="tab-known">Known <span id="known-badge" class="badge hidden"></span></button>
+</nav>
+
+<main id="app">
+
+  <!-- GROUP SELECTION SCREEN -->
+  <section id="screen-groups" class="screen">
+    <div class="group-section">
+      <h2>By CEFR level</h2>
+      <div class="group-grid" id="grid-levels"></div>
+    </div>
+    <div class="group-section">
+      <h2>By topic</h2>
+      <div class="group-grid" id="grid-topics"></div>
+    </div>
+  </section>
+
+  <!-- MODE SELECTION SCREEN -->
+  <section id="screen-mode" class="screen hidden">
+    <button class="back-btn" id="btn-back-to-groups">&larr; Groups</button>
+    <h2 id="mode-group-title"></h2>
+    <div class="level-chips hidden" id="level-chips"></div>
+    <p id="mode-group-count" class="muted"></p>
+    <div class="mode-buttons">
+      <button class="mode-btn" id="btn-mode-flashcards">
+        <span class="mode-icon">🗂️</span>
+        <span>Flashcards</span>
+      </button>
+      <button class="mode-btn" id="btn-mode-quiz">
+        <span class="mode-icon">❓</span>
+        <span>Quiz</span>
+      </button>
+      <button class="mode-btn" id="btn-mode-list">
+        <span class="mode-icon">📋</span>
+        <span>Word list</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- FLASHCARDS SCREEN -->
+  <section id="screen-flashcards" class="screen hidden">
+    <button class="back-btn" id="btn-back-from-flashcards">&larr; Back</button>
+    <div class="progress-row">
+      <span id="flash-progress"></span>
+      <span id="flash-known-count"></span>
+    </div>
+    <div class="deck-complete hidden" id="deck-complete">
+      <div class="result-box">
+        <h2>🎉 Deck complete!</h2>
+        <p class="muted" id="deck-complete-msg">You know every word in this deck.</p>
+        <button class="ctrl-btn wide hidden" id="btn-deck-next-level">Start next level ›</button>
+        <button class="ctrl-btn wide" id="btn-deck-study-all">Study all words again</button>
+        <button class="ctrl-btn wide" id="btn-deck-back">Back</button>
+      </div>
+    </div>
+    <div class="card-stage">
+      <div class="flashcard" id="flashcard">
+        <div class="flashcard-face flashcard-front">
+          <div class="pos-tag" id="fc-pos"></div>
+          <div class="fc-word" id="fc-word"></div>
+          <div class="flip-hint">Click to flip</div>
+        </div>
+        <div class="flashcard-face flashcard-back">
+          <div class="fc-def" id="fc-def"></div>
+          <div class="fc-example" id="fc-example"></div>
+        </div>
+      </div>
+    </div>
+    <div class="flash-controls">
+      <button class="ctrl-btn" id="btn-fc-prev">‹ Prev</button>
+      <button class="ctrl-btn danger" id="btn-fc-unknown">Still learning</button>
+      <button class="ctrl-btn success" id="btn-fc-known">I know it ✓</button>
+      <button class="ctrl-btn" id="btn-fc-next">Next ›</button>
+    </div>
+    <button class="reset-btn" id="btn-fc-reset">Reset progress for this group</button>
+  </section>
+
+  <!-- QUIZ SCREEN -->
+  <section id="screen-quiz" class="screen hidden">
+    <button class="back-btn" id="btn-back-from-quiz">&larr; Back</button>
+    <div class="progress-row">
+      <span id="quiz-progress"></span>
+      <span id="quiz-score"></span>
+    </div>
+    <div class="quiz-question">
+      <p class="muted">What word matches this definition?</p>
+      <p class="quiz-def" id="quiz-def"></p>
+    </div>
+    <div class="quiz-options" id="quiz-options"></div>
+    <div id="quiz-feedback" class="quiz-feedback"></div>
+    <button class="ctrl-btn wide hidden" id="btn-quiz-next">Next question ›</button>
+  </section>
+
+  <!-- QUIZ RESULT SCREEN -->
+  <section id="screen-result" class="screen hidden">
+    <div class="result-box">
+      <h2>Quiz complete!</h2>
+      <p class="result-score" id="result-score"></p>
+      <button class="ctrl-btn wide" id="btn-quiz-retry">Try again</button>
+      <button class="ctrl-btn wide" id="btn-quiz-groups">Choose another group</button>
+    </div>
+  </section>
+
+  <!-- STILL LEARNING SCREEN -->
+  <section id="screen-learning" class="screen hidden">
+    <h2>Still learning</h2>
+    <p class="muted" id="learning-summary"></p>
+    <button class="ctrl-btn wide hidden" id="btn-practice-learning">Practice these words 🗂️</button>
+    <div class="word-table" id="learning-table"></div>
+  </section>
+
+  <!-- GRAMMAR SCREEN -->
+  <section id="screen-grammar" class="screen hidden">
+    <h2>Grammar guide</h2>
+    <p class="muted">Click a rule to expand it.</p>
+    <div id="grammar-content"></div>
+  </section>
+
+  <!-- KNOWN WORDS SCREEN -->
+  <section id="screen-known" class="screen hidden">
+    <h2>Known words</h2>
+    <div class="level-chips" id="known-filters"></div>
+    <p class="muted" id="known-summary"></p>
+    <div class="word-table" id="known-table"></div>
+  </section>
+
+  <!-- WORD LIST SCREEN -->
+  <section id="screen-list" class="screen hidden">
+    <button class="back-btn" id="btn-back-from-list">&larr; Back</button>
+    <h2 id="list-title"></h2>
+    <div class="word-table" id="word-table"></div>
+  </section>
+
+</main>
+
+<script src="words.js"></script>
+<script src="grammar.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
