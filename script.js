@@ -111,6 +111,108 @@ function collectWords(setFn) {
 const allLearningWords = () => collectWords(learningSet);
 const allKnownWords = () => collectWords(knownSet);
 
+// ---- Pronunciation & transcription ----
+// IPA + real audio come from the Free Dictionary API and are cached in
+// localStorage; browser TTS covers words the API doesn't know.
+const DICT_CACHE_KEY = "wordup-dict-v1";
+let dictCache = {};
+try { dictCache = JSON.parse(localStorage.getItem(DICT_CACHE_KEY)) || {}; } catch (e) { /* ignore */ }
+const dictMisses = new Set(); // failed lookups — retry only next session
+
+function dictEntry(word) {
+  return dictCache[word.toLowerCase()] || null;
+}
+async function fetchDict(word) {
+  const w = word.toLowerCase();
+  if (dictCache[w]) return dictCache[w];
+  if (dictMisses.has(w)) return null;
+  try {
+    const res = await fetch("https://api.dictionaryapi.dev/api/v2/entries/en/" + encodeURIComponent(w));
+    if (!res.ok) throw new Error("lookup failed");
+    const data = await res.json();
+    let ipa = "", audio = "";
+    data.forEach(entry => {
+      if (!ipa && entry.phonetic) ipa = entry.phonetic;
+      (entry.phonetics || []).forEach(p => {
+        if (!ipa && p.text) ipa = p.text;
+        if (!audio && p.audio) audio = p.audio;
+      });
+    });
+    dictCache[w] = { ipa, audio };
+    localStorage.setItem(DICT_CACHE_KEY, JSON.stringify(dictCache));
+    return dictCache[w];
+  } catch (e) {
+    dictMisses.add(w);
+    return null;
+  }
+}
+function speakWord(word) {
+  if (!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(word);
+  u.lang = "en-US";
+  u.rate = 0.9;
+  speechSynthesis.speak(u);
+}
+async function pronounceWord(word) {
+  const d = await fetchDict(word);
+  if (d && d.audio) {
+    try { await new Audio(d.audio).play(); return; } catch (e) { /* fall back to TTS */ }
+  }
+  speakWord(word);
+}
+function youglishUrl(word) {
+  return "https://youglish.com/pronounce/" + encodeURIComponent(word) + "/english";
+}
+
+// ---- Recently studied groups ----
+const RECENT_KEY = "wordup-recent-v1";
+function loadRecent() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch (e) { return []; }
+}
+function recordRecent(key) {
+  const list = loadRecent().filter(r => r.key !== key);
+  list.unshift({ key, ts: Date.now() });
+  localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8)));
+}
+function timeAgo(ts) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "yesterday" : `${d} days ago`;
+}
+function renderRecent() {
+  const list = loadRecent().filter(r => (wordsForKey(r.key) || []).length);
+  document.getElementById("recent-section").classList.toggle("hidden", list.length === 0);
+  const box = document.getElementById("recent-list");
+  box.innerHTML = "";
+  list.forEach(r => {
+    const chip = document.createElement("button");
+    chip.className = "recent-chip";
+    chip.innerHTML = `${keyLabel(r.key)} <span>${timeAgo(r.ts)}</span>`;
+    chip.addEventListener("click", () => openGroup(keyParts(r.key).name, r.key));
+    box.appendChild(chip);
+  });
+}
+
+// ---- Quiz mistake statistics ----
+const STATS_KEY = "wordup-quiz-stats-v1";
+let quizStats = {};
+try { quizStats = JSON.parse(localStorage.getItem(STATS_KEY)) || {}; } catch (e) { /* ignore */ }
+function recordQuizResult(word, pickedWord) {
+  const s = quizStats[word] || (quizStats[word] = { right: 0, wrong: 0, confused: {} });
+  if (pickedWord === word) {
+    s.right++;
+  } else {
+    s.wrong++;
+    s.confused[pickedWord] = (s.confused[pickedWord] || 0) + 1;
+  }
+  localStorage.setItem(STATS_KEY, JSON.stringify(quizStats));
+}
+
 // ---- Themes ----
 const THEME_KEY = "wordup-theme";
 const THEMES = ["plum", "ocean", "forest", "mono", "light"];
@@ -135,15 +237,17 @@ const screens = {
   learning: document.getElementById("screen-learning"),
   known: document.getElementById("screen-known"),
   grammar: document.getElementById("screen-grammar"),
+  stats: document.getElementById("screen-stats"),
 };
 function showScreen(name) {
   Object.values(screens).forEach(s => s.classList.add("hidden"));
   screens[name].classList.remove("hidden");
-  const tabScreens = ["learning", "known", "grammar"];
+  const tabScreens = ["learning", "known", "grammar", "stats"];
   document.getElementById("tab-groups").classList.toggle("active", !tabScreens.includes(name));
   document.getElementById("tab-learning").classList.toggle("active", name === "learning");
   document.getElementById("tab-known").classList.toggle("active", name === "known");
   document.getElementById("tab-grammar").classList.toggle("active", name === "grammar");
+  document.getElementById("tab-stats").classList.toggle("active", name === "stats");
 }
 
 let currentTopic = null; // topic or CEFR-level name shown on the mode screen
@@ -154,6 +258,7 @@ document.getElementById("tab-groups").addEventListener("click", showGroupsScreen
 document.getElementById("tab-learning").addEventListener("click", showLearningScreen);
 document.getElementById("tab-known").addEventListener("click", showKnownScreen);
 document.getElementById("tab-grammar").addEventListener("click", showGrammarScreen);
+document.getElementById("tab-stats").addEventListener("click", showStatsScreen);
 
 // ---- Grammar guide ----
 let grammarRendered = false;
@@ -236,7 +341,94 @@ function renderGroupGrid(container, names) {
 function showGroupsScreen() {
   renderGroupGrid(document.getElementById("grid-levels"), LEVELS);
   renderGroupGrid(document.getElementById("grid-topics"), TOPICS);
+  renderRecent();
   showScreen("groups");
+}
+
+// ---- Shared word row (used by search, learning tab and word list) ----
+function wordRow(w, opts = {}) {
+  let tag = "";
+  if (opts.showStatus) {
+    if (knownSet(w.key).has(w.word)) tag = '<span class="g-mastered">✓ known</span>';
+    else if (learningSet(w.key).has(w.word)) tag = '<span class="w-learning-tag">still learning</span>';
+  }
+  const cached = dictEntry(w.word);
+  const row = document.createElement("div");
+  row.className = "word-row";
+  row.innerHTML = `
+    <div class="w-top">
+      <span class="w-word">${w.word}</span>
+      <span class="w-ipa">${cached && cached.ipa ? cached.ipa : ""}</span>
+      <span class="w-pos">${w.pos}</span>
+      ${tag}
+      ${opts.showGroup ? `<span class="w-group-tag w-group-link" title="Open this group">${keyLabel(w.key)}</span>` : ""}
+    </div>
+    <div class="w-def">${w.def}</div>
+    <div class="w-example">${w.example}</div>
+    <div class="w-actions">
+      <button class="icon-btn small" title="Play pronunciation">🔊</button>
+      <a class="icon-btn small" href="${youglishUrl(w.word)}" target="_blank" rel="noopener"
+         title="Real examples from YouTube videos (YouGlish)">▶ YouTube</a>
+    </div>
+  `;
+  row.querySelector(".w-actions button").addEventListener("click", async () => {
+    await pronounceWord(w.word);
+    const d = dictEntry(w.word);
+    if (d && d.ipa) row.querySelector(".w-ipa").textContent = d.ipa;
+  });
+  if (opts.showGroup) {
+    row.querySelector(".w-group-link").addEventListener("click", () =>
+      openGroup(keyParts(w.key).name, w.key));
+  }
+  return row;
+}
+
+// ---- Search across all groups ----
+let searchIndex = null;
+function buildSearchIndex() {
+  if (!searchIndex) {
+    searchIndex = [];
+    allKeys().forEach(key =>
+      wordsForKey(key).forEach(w => searchIndex.push({ ...w, key })));
+  }
+  return searchIndex;
+}
+const searchInput = document.getElementById("search-input");
+searchInput.addEventListener("input", () =>
+  renderSearch(searchInput.value.trim().toLowerCase()));
+
+function renderSearch(q) {
+  const box = document.getElementById("search-results");
+  const searching = q.length > 0;
+  document.getElementById("screen-groups").classList.toggle("searching", searching);
+  box.classList.toggle("hidden", !searching);
+  box.innerHTML = "";
+  if (!searching) return;
+
+  const matches = buildSearchIndex().filter(w =>
+    w.word.toLowerCase().includes(q) || w.def.toLowerCase().includes(q));
+  matches.sort((a, b) => {
+    const aw = a.word.toLowerCase().startsWith(q);
+    const bw = b.word.toLowerCase().startsWith(q);
+    if (aw !== bw) return aw ? -1 : 1;
+    return a.word.localeCompare(b.word);
+  });
+
+  if (matches.length === 0) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = `No words found for “${q}”.`;
+    box.appendChild(p);
+    return;
+  }
+  matches.slice(0, 40).forEach(w =>
+    box.appendChild(wordRow(w, { showGroup: true, showStatus: true })));
+  if (matches.length > 40) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = `…and ${matches.length - 40} more — keep typing to narrow the search.`;
+    box.appendChild(p);
+  }
 }
 
 function openGroup(name, preferredKey) {
@@ -331,6 +523,7 @@ function startFlashcards(deck, mode) {
   fcIndex = 0;
   fcFlipped = false;
   fcMode = mode;
+  if (mode !== "learning-mix" && currentKey) recordRecent(currentKey);
   renderFlashcard();
   showScreen("flashcards");
 }
@@ -382,6 +575,18 @@ function renderFlashcard() {
   document.getElementById("fc-word").textContent = w.word;
   document.getElementById("fc-def").textContent = w.def;
   document.getElementById("fc-example").textContent = w.example;
+  document.getElementById("fc-youglish").href = youglishUrl(w.word);
+  document.getElementById("fc-mic-feedback").textContent = "";
+  const ipaBox = document.getElementById("fc-ipa");
+  const cached = dictEntry(w.word);
+  ipaBox.textContent = cached && cached.ipa ? cached.ipa : "";
+  if (!cached) {
+    fetchDict(w.word).then(d => {
+      // only fill in if this card is still on screen
+      if (d && d.ipa && fcDeck[fcIndex] && fcDeck[fcIndex].word === w.word)
+        ipaBox.textContent = d.ipa;
+    });
+  }
   document.getElementById("flashcard").classList.remove("flipped");
   fcFlipped = false;
   document.getElementById("flash-progress").textContent =
@@ -393,6 +598,60 @@ function renderFlashcard() {
 document.getElementById("flashcard").addEventListener("click", () => {
   fcFlipped = !fcFlipped;
   document.getElementById("flashcard").classList.toggle("flipped", fcFlipped);
+});
+
+// buttons and links inside the card must not flip it
+document.getElementById("btn-fc-speak").addEventListener("click", e => {
+  e.stopPropagation();
+  if (fcDeck[fcIndex]) pronounceWord(fcDeck[fcIndex].word);
+});
+document.getElementById("fc-youglish").addEventListener("click", e => e.stopPropagation());
+
+// ---- Speaking practice (Web Speech API, Chrome/Edge) ----
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micBtn = document.getElementById("btn-fc-mic");
+if (SpeechRec) micBtn.classList.remove("hidden");
+let recognizing = false;
+micBtn.addEventListener("click", e => {
+  e.stopPropagation();
+  if (!SpeechRec || recognizing || !fcDeck.length) return;
+  const target = fcDeck[fcIndex].word;
+  const feedback = document.getElementById("fc-mic-feedback");
+  const rec = new SpeechRec();
+  rec.lang = "en-US";
+  rec.maxAlternatives = 5;
+  recognizing = true;
+  micBtn.classList.add("listening");
+  feedback.textContent = "🎙️ Listening… say the word";
+  feedback.className = "fc-mic-feedback";
+  rec.onresult = ev => {
+    const alts = ev.results[0];
+    const heard = [];
+    for (let i = 0; i < alts.length; i++) heard.push(alts[i].transcript.trim().toLowerCase());
+    const norm = s => s.toLowerCase().replace(/[^a-z' ]/g, "");
+    if (heard.some(h => norm(h) === norm(target))) {
+      feedback.textContent = "✓ Sounds right!";
+      feedback.className = "fc-mic-feedback good";
+    } else {
+      feedback.textContent = `✗ Heard “${heard[0] || "…"}” — try again`;
+      feedback.className = "fc-mic-feedback bad";
+    }
+  };
+  rec.onerror = ev => {
+    feedback.textContent = ev.error === "not-allowed"
+      ? "Microphone blocked — allow access and try again."
+      : "Couldn't hear you — try again.";
+    feedback.className = "fc-mic-feedback bad";
+  };
+  rec.onend = () => {
+    recognizing = false;
+    micBtn.classList.remove("listening");
+    if (feedback.textContent.startsWith("🎙️")) feedback.textContent = "";
+  };
+  try { rec.start(); } catch (err) {
+    recognizing = false;
+    micBtn.classList.remove("listening");
+  }
 });
 
 document.getElementById("btn-fc-prev").addEventListener("click", () => {
@@ -449,20 +708,7 @@ function showLearningScreen() {
 
   const table = document.getElementById("learning-table");
   table.innerHTML = "";
-  words.forEach(w => {
-    const row = document.createElement("div");
-    row.className = "word-row";
-    row.innerHTML = `
-      <div class="w-top">
-        <span class="w-word">${w.word}</span>
-        <span class="w-pos">${w.pos}</span>
-        <span class="w-group-tag">${keyLabel(w.key)}</span>
-      </div>
-      <div class="w-def">${w.def}</div>
-      <div class="w-example">${w.example}</div>
-    `;
-    table.appendChild(row);
-  });
+  words.forEach(w => table.appendChild(wordRow(w, { showGroup: true })));
   showScreen("learning");
 }
 
@@ -534,6 +780,7 @@ function startQuiz() {
   quizWords = shuffle([...filteredLevelWords(currentKey)]);
   quizIndex = 0;
   quizScore = 0;
+  recordRecent(currentKey);
   renderQuizQuestion();
   showScreen("quiz");
 }
@@ -583,6 +830,7 @@ function handleQuizAnswer(btn, opt, correct) {
   quizAnswered = true;
   const allBtns = document.querySelectorAll(".quiz-option");
   allBtns.forEach(b => b.disabled = true);
+  recordQuizResult(correct.word, opt.word);
 
   const feedback = document.getElementById("quiz-feedback");
   if (opt.word === correct.word) {
@@ -619,30 +867,57 @@ document.getElementById("btn-back-from-quiz").addEventListener("click", () => op
 // ============ WORD LIST ============
 document.getElementById("btn-mode-list").addEventListener("click", () => {
   document.getElementById("list-title").textContent = keyLabel(currentKey);
+  recordRecent(currentKey);
   const table = document.getElementById("word-table");
   table.innerHTML = "";
-  const known = knownSet(currentKey);
-  const learning = learningSet(currentKey);
-  filteredLevelWords(currentKey).forEach(w => {
-    const row = document.createElement("div");
-    row.className = "word-row";
-    let tag = "";
-    if (known.has(w.word)) tag = '<span class="g-mastered">✓ known</span>';
-    else if (learning.has(w.word)) tag = '<span class="w-learning-tag">still learning</span>';
-    row.innerHTML = `
-      <div class="w-top">
-        <span class="w-word">${w.word}</span>
-        <span class="w-pos">${w.pos}</span>
-        ${tag}
-      </div>
-      <div class="w-def">${w.def}</div>
-      <div class="w-example">${w.example}</div>
-    `;
-    table.appendChild(row);
-  });
+  filteredLevelWords(currentKey).forEach(w =>
+    table.appendChild(wordRow({ ...w, key: currentKey }, { showStatus: true })));
   showScreen("list");
 });
 document.getElementById("btn-back-from-list").addEventListener("click", () => openGroup(currentTopic, currentKey));
+
+// ============ MISTAKE STATS TAB ============
+function showStatsScreen() {
+  const entries = Object.entries(quizStats)
+    .filter(([, s]) => s.wrong > 0)
+    .sort((a, b) => b[1].wrong - a[1].wrong || a[1].right - b[1].right);
+
+  document.getElementById("stats-summary").textContent = entries.length
+    ? "Words you miss in quizzes, most-missed first."
+    : "No quiz mistakes recorded yet — take a quiz and your tricky words will collect here.";
+  document.getElementById("btn-stats-reset").classList.toggle("hidden", entries.length === 0);
+
+  const table = document.getElementById("stats-table");
+  table.innerHTML = "";
+  entries.forEach(([word, s]) => {
+    const total = s.right + s.wrong;
+    const confused = Object.entries(s.confused)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([w, n]) => `“${w}”${n > 1 ? ` ×${n}` : ""}`)
+      .join(", ");
+    const row = document.createElement("div");
+    row.className = "word-row";
+    row.innerHTML = `
+      <div class="w-top">
+        <span class="w-word">${word}</span>
+        <span class="stat-wrong">✗ ${s.wrong}</span>
+        <span class="stat-right">✓ ${s.right}</span>
+        <span class="w-group-tag">${Math.round(s.right / total * 100)}% correct</span>
+      </div>
+      ${confused ? `<div class="w-def muted">You picked instead: ${confused}</div>` : ""}
+    `;
+    table.appendChild(row);
+  });
+  showScreen("stats");
+}
+document.getElementById("btn-stats-reset").addEventListener("click", () => {
+  if (confirm("Clear all quiz mistake statistics?")) {
+    quizStats = {};
+    localStorage.removeItem(STATS_KEY);
+    showStatsScreen();
+  }
+});
 
 // ---- init ----
 applyTheme(localStorage.getItem(THEME_KEY) || "plum");

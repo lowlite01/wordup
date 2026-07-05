@@ -25,12 +25,21 @@
   <button class="tab" id="tab-grammar">Grammar</button>
   <button class="tab" id="tab-learning">Still learning <span id="learning-badge" class="badge hidden"></span></button>
   <button class="tab" id="tab-known">Known <span id="known-badge" class="badge hidden"></span></button>
+  <button class="tab" id="tab-stats">Stats</button>
 </nav>
 
 <main id="app">
 
   <!-- GROUP SELECTION SCREEN -->
   <section id="screen-groups" class="screen">
+    <div class="search-box">
+      <input type="search" id="search-input" placeholder="🔍 Search a word in all groups…" autocomplete="off">
+    </div>
+    <div id="search-results" class="word-table hidden"></div>
+    <div class="group-section hidden" id="recent-section">
+      <h2>Recently studied</h2>
+      <div class="recent-list" id="recent-list"></div>
+    </div>
     <div class="group-section">
       <h2>By CEFR level</h2>
       <div class="group-grid" id="grid-levels"></div>
@@ -84,11 +93,18 @@
         <div class="flashcard-face flashcard-front">
           <div class="pos-tag" id="fc-pos"></div>
           <div class="fc-word" id="fc-word"></div>
+          <div class="fc-ipa" id="fc-ipa"></div>
+          <div class="fc-actions">
+            <button class="icon-btn" id="btn-fc-speak" title="Play pronunciation">🔊</button>
+            <button class="icon-btn hidden" id="btn-fc-mic" title="Say the word, I'll check you">🎤</button>
+          </div>
+          <div class="fc-mic-feedback" id="fc-mic-feedback"></div>
           <div class="flip-hint">Click to flip</div>
         </div>
         <div class="flashcard-face flashcard-back">
           <div class="fc-def" id="fc-def"></div>
           <div class="fc-example" id="fc-example"></div>
+          <a class="fc-youglish" id="fc-youglish" href="#" target="_blank" rel="noopener">▶ Real examples on YouTube</a>
         </div>
       </div>
     </div>
@@ -148,6 +164,14 @@
     <div class="level-chips" id="known-filters"></div>
     <p class="muted" id="known-summary"></p>
     <div class="word-table" id="known-table"></div>
+  </section>
+
+  <!-- MISTAKE STATS SCREEN -->
+  <section id="screen-stats" class="screen hidden">
+    <h2>Mistake statistics</h2>
+    <p class="muted" id="stats-summary"></p>
+    <div class="word-table" id="stats-table"></div>
+    <button class="reset-btn hidden" id="btn-stats-reset">Clear mistake statistics</button>
   </section>
 
   <!-- WORD LIST SCREEN -->
