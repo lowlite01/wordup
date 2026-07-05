@@ -183,6 +183,26 @@
 
 </main>
 
+<!-- WORD CONTEXT MODAL -->
+<div id="ctx-overlay" class="ctx-overlay hidden">
+  <div class="ctx-modal">
+    <button class="ctx-close" id="ctx-close" title="Close">✕</button>
+    <div class="ctx-head">
+      <span class="w-word" id="ctx-word"></span>
+      <span class="w-ipa" id="ctx-ipa"></span>
+      <span class="w-pos" id="ctx-pos"></span>
+    </div>
+    <div class="w-def" id="ctx-def"></div>
+    <div class="w-example" id="ctx-example"></div>
+    <div class="w-actions">
+      <button class="icon-btn small" id="ctx-speak" title="Play pronunciation">🔊</button>
+      <a class="icon-btn small" id="ctx-youglish" href="#" target="_blank" rel="noopener"
+         title="Real examples from YouTube videos (YouGlish)">▶ YouTube</a>
+    </div>
+    <div id="ctx-sections"></div>
+  </div>
+</div>
+
 <script src="words.js"></script>
 <script src="grammar.js"></script>
 <script src="script.js"></script>

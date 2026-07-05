@@ -165,6 +165,131 @@ function youglishUrl(word) {
   return "https://youglish.com/pronounce/" + encodeURIComponent(word) + "/english";
 }
 
+// ---- Word context: phrasal verbs, collocations, synonyms (Datamuse API) ----
+// rel_syn = synonyms, rel_bgb = frequent predecessors, rel_bga = frequent
+// followers; phrasal verbs are followers that happen to be particles.
+const CTX_CACHE_KEY = "wordup-context-v1";
+let ctxCache = {};
+try { ctxCache = JSON.parse(localStorage.getItem(CTX_CACHE_KEY)) || {}; } catch (e) { /* ignore */ }
+const ctxMisses = new Set();
+
+const PARTICLES = new Set(["up", "down", "out", "off", "in", "on", "away", "back",
+  "over", "through", "around", "along", "into", "about", "for", "after", "at",
+  "forward", "apart", "without", "by", "with", "to"]);
+const CTX_STOPWORDS = new Set(["the", "a", "an", "of", "to", "and", "or", "is",
+  "was", "be", "been", "being", "it", "that", "this", "these", "those", "his",
+  "her", "their", "its", "my", "your", "our", "as", "at", "by", "he", "she",
+  "they", "we", "i", "you", "not", "are", "were", "have", "has", "had", "but",
+  "with", "from", "in", "on", "so", "if", "than", "then", "there", "who",
+  "which", "what", "when", "will", "would", "can", "could", "do", "does", "did",
+  "for", "any", "some", "no", "one", "two", "all", "more", "most", "other",
+  "such", "own", "very", "how", "why", "where", "also", "just", "about"]);
+
+async function fetchWordContext(word, pos) {
+  const w = word.toLowerCase();
+  if (ctxCache[w]) return ctxCache[w];
+  if (ctxMisses.has(w)) return { phrasal: [], colloc: [], synonyms: [] };
+  const get = url => fetch(url).then(r => r.ok ? r.json() : []).catch(() => null);
+  const q = encodeURIComponent(w);
+  const [syn, before, after] = await Promise.all([
+    get(`https://api.datamuse.com/words?rel_syn=${q}&max=10`),
+    get(`https://api.datamuse.com/words?rel_bgb=${q}&max=15`),
+    get(`https://api.datamuse.com/words?rel_bga=${q}&max=30`),
+  ]);
+  if (!syn && !before && !after) { // network down — don't cache
+    ctxMisses.add(w);
+    return { phrasal: [], colloc: [], synonyms: [] };
+  }
+  const clean = list => (list || []).map(x => x.word)
+    .filter(x => /^[a-z'-]+$/.test(x));
+  const phrasal = (pos || "").includes("verb")
+    ? clean(after).filter(x => PARTICLES.has(x)).slice(0, 6).map(x => `${w} ${x}`)
+    : [];
+  const colloc = [
+    ...clean(before).filter(x => !CTX_STOPWORDS.has(x)).slice(0, 5).map(x => `${x} ${w}`),
+    ...clean(after).filter(x => !CTX_STOPWORDS.has(x) && !PARTICLES.has(x)).slice(0, 5).map(x => `${w} ${x}`),
+  ];
+  const synonyms = clean(syn).slice(0, 10);
+  ctxCache[w] = { phrasal, colloc, synonyms };
+  localStorage.setItem(CTX_CACHE_KEY, JSON.stringify(ctxCache));
+  return ctxCache[w];
+}
+
+let ctxWord = null; // word currently shown in the modal
+async function openWordContext(w) {
+  ctxWord = w.word;
+  document.getElementById("ctx-word").textContent = w.word;
+  document.getElementById("ctx-pos").textContent = w.pos || "";
+  document.getElementById("ctx-def").textContent = w.def || "";
+  document.getElementById("ctx-example").textContent = w.example || "";
+  document.getElementById("ctx-youglish").href = youglishUrl(w.word);
+  const ipaEl = document.getElementById("ctx-ipa");
+  const cached = dictEntry(w.word);
+  ipaEl.textContent = cached && cached.ipa ? cached.ipa : "";
+  if (!cached) {
+    fetchDict(w.word).then(d => {
+      if (d && d.ipa && ctxWord === w.word) ipaEl.textContent = d.ipa;
+    });
+  }
+  const box = document.getElementById("ctx-sections");
+  box.innerHTML = '<p class="muted">Loading word context…</p>';
+  document.getElementById("ctx-overlay").classList.remove("hidden");
+  const ctx = await fetchWordContext(w.word, w.pos);
+  if (ctxWord !== w.word) return; // modal moved on to another word
+  renderCtxSections(box, ctx);
+}
+function renderCtxSections(box, ctx) {
+  box.innerHTML = "";
+  let any = false;
+  [["Phrasal verbs", ctx.phrasal, "phrase"],
+   ["Collocations", ctx.colloc, "phrase"],
+   ["Synonyms", ctx.synonyms, "syn"]].forEach(([title, items, kind]) => {
+    if (!items.length) return;
+    any = true;
+    const h = document.createElement("h3");
+    h.className = "ctx-title";
+    h.textContent = title;
+    const wrap = document.createElement("div");
+    wrap.className = "ctx-chips";
+    items.forEach(text => {
+      if (kind === "phrase") {
+        const a = document.createElement("a");
+        a.className = "ctx-chip";
+        a.textContent = text;
+        a.href = youglishUrl(text);
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.title = "Hear this in YouTube videos (YouGlish)";
+        wrap.appendChild(a);
+      } else {
+        const b = document.createElement("button");
+        b.className = "ctx-chip";
+        b.textContent = text;
+        b.title = "Show context for this word";
+        b.addEventListener("click", () => openWordContext({ word: text }));
+        wrap.appendChild(b);
+      }
+    });
+    box.appendChild(h);
+    box.appendChild(wrap);
+  });
+  if (!any) box.innerHTML = '<p class="muted">No extra context found for this word.</p>';
+}
+function closeWordContext() {
+  ctxWord = null;
+  document.getElementById("ctx-overlay").classList.add("hidden");
+}
+document.getElementById("ctx-close").addEventListener("click", closeWordContext);
+document.getElementById("ctx-overlay").addEventListener("click", e => {
+  if (e.target.id === "ctx-overlay") closeWordContext();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeWordContext();
+});
+document.getElementById("ctx-speak").addEventListener("click", () => {
+  if (ctxWord) pronounceWord(ctxWord);
+});
+
 // ---- Recently studied groups ----
 const RECENT_KEY = "wordup-recent-v1";
 function loadRecent() {
@@ -357,7 +482,7 @@ function wordRow(w, opts = {}) {
   row.className = "word-row";
   row.innerHTML = `
     <div class="w-top">
-      <span class="w-word">${w.word}</span>
+      <span class="w-word w-clickable" title="Phrasal verbs, collocations & synonyms">${w.word}</span>
       <span class="w-ipa">${cached && cached.ipa ? cached.ipa : ""}</span>
       <span class="w-pos">${w.pos}</span>
       ${tag}
@@ -371,6 +496,7 @@ function wordRow(w, opts = {}) {
          title="Real examples from YouTube videos (YouGlish)">▶ YouTube</a>
     </div>
   `;
+  row.querySelector(".w-word").addEventListener("click", () => openWordContext(w));
   row.querySelector(".w-actions button").addEventListener("click", async () => {
     await pronounceWord(w.word);
     const d = dictEntry(w.word);
@@ -757,12 +883,13 @@ function showKnownScreen() {
     row.className = "word-row compact";
     row.innerHTML = `
       <div class="w-top">
-        <span class="w-word">${w.word}</span>
+        <span class="w-word w-clickable" title="Phrasal verbs, collocations & synonyms">${w.word}</span>
         <span class="w-dash">—</span>
         <span class="w-def-inline">${w.def}</span>
         <span class="w-group-tag">${keyLabel(w.key)}</span>
       </div>
     `;
+    row.querySelector(".w-word").addEventListener("click", () => openWordContext(w));
     table.appendChild(row);
   });
   showScreen("known");
